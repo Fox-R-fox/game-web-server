@@ -1,34 +1,53 @@
-version: 0.2
+#!/bin/bash
+# This script shows how to build the Docker image and push it to Docker Hub.
 
-env:
-  variables:
-    DOCKERHUB_USERNAME: "your-dockerhub-username"
-phases:
-  install:
-    commands:
-      - apt-get update -y && apt-get install -y git jq
-      - pip install -r requirements.txt
-  pre_build:
-    commands:
-      - echo "This is CodeCommit Repo URL - $CODEBUILD_SOURCE_REPO_URL"
-      - |
-        REPO_NAME=$(echo "$CODEBUILD_SOURCE_REPO_URL" | awk -F "/" '{print $NF}')
-        BRANCH_NAME=$(echo "$CODEBUILD_SOURCE_VERSION" | awk -F "/" '{print $NF}')
-        echo "BRANCH_NAME is : $BRANCH_NAME"
-        echo "CODEBUILD_SOURCE_REPO_URL is : $CODEBUILD_SOURCE_REPO_URL"
-        echo "CODEBUILD_SOURCE_VERSION is : $CODEBUILD_SOURCE_VERSION"
-      - echo "This is CodeCommit Repo Name - $REPO_NAME"
-      - echo "This is the CODEBUILD_SRC_DIR - $CODEBUILD_SRC_DIR"
-      - echo "This is the commit id from Source Control - $CODEBUILD_RESOLVED_SOURCE_VERSION"
-  build:
-    commands:
-      - echo "inside build commands and printing all the environment variables below"
-      - printenv
-      - echo `pwd`
-  post_build:
-    commands:
-      - bash $CODEBUILD_SRC_DIR/build_and_push.sh $DOCKERHUB_USERNAME
+echo "Inside build_and_push.sh file"
 
-artifacts:
-  files:
-    - '**/*'
+DOCKERHUB_USERNAME=$1
+
+echo "Value of DOCKERHUB_USERNAME is $DOCKERHUB_USERNAME"
+
+if [ "$DOCKERHUB_USERNAME" == "" ]; then
+    echo "Usage: $0 <dockerhub-username>"
+    exit 1
+fi
+
+src_dir=$CODEBUILD_SRC_DIR
+
+# Fetch DockerHub credentials from AWS Secrets Manager using ARN
+echo "Fetching DockerHub credentials from AWS Secrets Manager..."
+aws secretsmanager get-secret-value --secret-id arn:aws:secretsmanager:us-east-1:339712721384:secret:docker-us-JYDQoe --query SecretString --output text > dockerhub_credentials.json
+
+DOCKERHUB_USERNAME=$(jq -r '.username' dockerhub_credentials.json)
+DOCKERHUB_PASSWORD=$(jq -r '.password' dockerhub_credentials.json)
+
+echo "Logging in to DockerHub..."
+echo $DOCKERHUB_PASSWORD | docker login --username $DOCKERHUB_USERNAME --password-stdin
+
+# Get the region defined in the current configuration (default to us-east-1 if none defined)
+region=$AWS_REGION
+if [ -z "$region" ]; then
+    region="us-east-1"
+fi
+echo "Region value is: $region"
+
+# Set up Docker Buildx
+docker buildx create --use --name mybuilder
+docker buildx inspect mybuilder --bootstrap
+
+# Build and push WebApp image
+WEBAPP_IMAGE="${DOCKERHUB_USERNAME}/webapp"
+webapp_fullname="${WEBAPP_IMAGE}:latest"
+
+echo "Building and pushing WebApp image..."
+docker buildx build --platform linux/amd64,linux/arm64 -t ${webapp_fullname} -f ${src_dir}/Dockerfile ${src_dir} --push
+
+# Logout from Docker Hub
+docker logout
+
+if [ $? -ne 0 ]; then
+    echo "Docker Push Event did not Succeed"
+    exit 1
+else
+    echo "Docker Push Event is Successful"
+fi
