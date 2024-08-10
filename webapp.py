@@ -6,7 +6,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'  # Replace with a secure secret key
 
-S3_BUCKET = 'nomad-tictactoe-project'
+S3_BUCKET = 'builddb'
 S3_REGION = 'us-east-1'
 s3_client = boto3.client('s3', region_name=S3_REGION)
 
